@@ -1,3 +1,5 @@
+
+
 name: cd-deploy
 
 on:
@@ -12,7 +14,7 @@ on:
         default: "dev"
 
 permissions:
-  id-token: write   # for OIDC
+  id-token: write
   contents: read
 
 jobs:
@@ -24,20 +26,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --- OIDC auth to Google Cloud ---
+      # ---- Auth to GCP (OIDC / keyless) ----
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_WIF_SA_EMAIL }}
 
-      # --- Cloud SDK + GKE auth plugin ---
-      - name: Set up gcloud + GKE auth plugin
-        uses: google-github-actions/setup-gcloud@v2
+      # ---- Get GKE credentials (installs gke-gcloud-auth-plugin automatically) ----
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
         with:
-          install_components: gke-gcloud-auth-plugin
+          project_id: ${{ vars.GCP_PROJECT }}
+          cluster_name: gke-adv
+          location: ${{ vars.GCP_ZONE }}   # use zone for zonal cluster
 
-      # --- kubectl & helm ---
+      # ---- Tooling: kubectl, Helm, yq ----
       - name: Install kubectl
         uses: actions/setup-kubectl@v4
         with:
@@ -48,39 +52,30 @@ jobs:
         with:
           version: 'v3.14.4'
 
-      # --- yq (no snap) ---
       - name: Install yq
         uses: mikefarah/yq@v4.44.3
 
-      # --- Get cluster credentials (requires the GKE auth plugin) ---
-      - name: Get GKE credentials
-        env:
-          USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
+      # ---- Sanity: confirm plugin + cluster access ----
+      - name: Sanity checks
         run: |
-          gcloud container clusters get-credentials gke-adv \
-            --zone "${{ vars.GCP_ZONE }}" \
-            --project "${{ vars.GCP_PROJECT }}"
-
-      # (optional: sanity check the plugin works)
-      - name: kubectl sanity
-        run: |
+          which gke-gcloud-auth-plugin || true
+          gke-gcloud-auth-plugin --version || true
           kubectl version --client=true
           kubectl get nodes || true
 
-      # --- Inject image repo/tag for the chosen env ---
+      # ---- Inject image repo & tag for selected env ----
       - name: Set image repo & tag
         run: |
           ENVIRONMENT="${{ github.event.inputs.env || 'dev' }}"
           yq -i '.imageRepo = "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/apps"' "env/${ENVIRONMENT}/values.yaml"
           yq -i '.imageTag = "${{ github.sha }}"' "env/${ENVIRONMENT}/values.yaml"
 
-      # --- Deploy with Helm wrapper ---
+      # ---- Deploy with Helm wrapper ----
       - name: Helm deploy
         run: |
           ENVIRONMENT="${{ github.event.inputs.env || 'dev' }}"
           bash scripts/helm_deploy.sh "${ENVIRONMENT}" app default
 
-      # --- Apply Gateway (needs TLS secret or switch to HTTP for smoke) ---
+      # ---- Apply Gateway API resources (needs TLS secret or switch to HTTP for smoke) ----
       - name: Apply Gateway
         run: bash scripts/setup_gateway.sh
-

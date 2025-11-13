@@ -1,34 +1,79 @@
 name: cd-deploy
+
 on:
   workflow_run:
     workflows: ["ci-build"]
     types: [completed]
   workflow_dispatch:
     inputs:
-      env: { description: "Environment", required: true, default: "dev" }
+      env:
+        description: "Environment"
+        required: true
+        default: "dev"
+
+permissions:
+  id-token: write   # needed for OIDC
+  contents: read
+
 jobs:
   deploy:
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
+
     steps:
-    - uses: actions/checkout@v4
-    - uses: google-github-actions/auth@v2
-      with:
-        workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-        service_account: ${{ secrets.GCP_WIF_SA_EMAIL }}
-    - uses: google-github-actions/setup-gcloud@v2
-    - name: Get GKE credentials
-      run: gcloud container clusters get-credentials gke-adv --zone ${{ vars.GCP_ZONE }} --project ${{ vars.GCP_PROJECT }}
-    - name: Install yq
-      run: sudo apt-get update && sudo apt-get install -y jq && sudo snap install yq
-    - name: Set image repo & tag for env
-      run: |
-        yq -i '.imageRepo = "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/apps"' env/dev/values.yaml
-        yq -i '.imageTag = "${{ env.IMAGE_TAG || github.sha }}"' env/dev/values.yaml
-    - name: Deploy with Helm wrapper
-      run: bash scripts/helm_deploy.sh "${{ inputs.env || 'dev' }}" app default
-    - name: Apply Gateway
-      run: bash scripts/setup_gateway.sh
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- Auth to Google Cloud via OIDC (keyless) ----
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SA_EMAIL }}
+
+      # ---- Cloud SDK + GKE auth plugin ----
+      - name: Set up gcloud + GKE auth plugin
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      # ---- kubectl & helm ----
+      - name: Install kubectl
+        uses: actions/setup-kubectl@v4
+        with:
+          version: 'latest'
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.4'
+
+      # ---- yq (no snap) ----
+      - name: Install yq
+        uses: mikefarah/yq@v4.44.3
+
+      # ---- Get cluster credentials (uses the GKE auth plugin) ----
+      - name: Get GKE credentials
+        env:
+          USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
+        run: |
+          gcloud container clusters get-credentials gke-adv \
+            --zone "${{ vars.GCP_ZONE }}" \
+            --project "${{ vars.GCP_PROJECT }}"
+
+      # ---- Set image repo & tag for env values ----
+      - name: Set image repo & tag
+        run: |
+          ENVIRONMENT="${{ github.event.inputs.env || 'dev' }}"
+          yq -i '.imageRepo = "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/apps"' "env/${ENVIRONMENT}/values.yaml"
+          yq -i '.imageTag = "${{ github.sha }}"' "env/${ENVIRONMENT}/values.yaml"
+
+      # ---- Deploy app with Helm wrapper ----
+      - name: Helm deploy
+        run: |
+          ENVIRONMENT="${{ github.event.inputs.env || 'dev' }}"
+          bash scripts/helm_deploy.sh "${ENVIRONMENT}" app default
+
+      # ---- Apply Gateway API resources (requires TLS secret or adjust to HTTP for smoke test) ----
+      - name: Apply Gateway
+        run: bash scripts/setup_gateway.sh

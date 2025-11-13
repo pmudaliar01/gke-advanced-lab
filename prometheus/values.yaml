@@ -1,0 +1,9 @@
+grafana:
+  adminUser: admin
+  adminPassword: admin
+  defaultDashboardsEnabled: true
+  dashboardsConfigMaps:
+    loki-logs-overview: grafana-loki-dashboards
+prometheus:
+  prometheusSpec:
+    retention: 7d

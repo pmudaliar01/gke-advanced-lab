@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  labels: { app: web }
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector: { matchLabels: { app: web } }
+  template:
+    metadata:
+      labels: { app: web }
+    spec:
+      serviceAccountName: web-sa
+      containers:
+      - name: web
+        image: "{{ .Values.imageRepo }}/web:{{ .Values.imageTag }}"
+        ports: [{ containerPort: {{ .Values.service.webPort }} }]
+        readinessProbe: { httpGet: { path: /healthz, port: {{ .Values.service.webPort }} }, periodSeconds: 5 }
+        livenessProbe:  { httpGet: { path: /livez,   port: {{ .Values.service.webPort }} }, periodSeconds: 10 }
+        resources:
+          requests: { cpu: "200m", memory: "256Mi" }
+          limits:   { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-svc
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  selector: { app: web }
+  ports:
+    - port: 80
+      targetPort: {{ .Values.service.webPort }}
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: web-hpa }
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70

@@ -1,0 +1,34 @@
+name: cd-deploy
+on:
+  workflow_run:
+    workflows: ["ci-build"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      env: { description: "Environment", required: true, default: "dev" }
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+    - uses: actions/checkout@v4
+    - uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+        service_account: ${{ secrets.GCP_WIF_SA_EMAIL }}
+    - uses: google-github-actions/setup-gcloud@v2
+    - name: Get GKE credentials
+      run: gcloud container clusters get-credentials gke-adv --zone ${{ vars.GCP_ZONE }} --project ${{ vars.GCP_PROJECT }}
+    - name: Install yq
+      run: sudo apt-get update && sudo apt-get install -y jq && sudo snap install yq
+    - name: Set image repo & tag for env
+      run: |
+        yq -i '.imageRepo = "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/apps"' env/dev/values.yaml
+        yq -i '.imageTag = "${{ env.IMAGE_TAG || github.sha }}"' env/dev/values.yaml
+    - name: Deploy with Helm wrapper
+      run: bash scripts/helm_deploy.sh "${{ inputs.env || 'dev' }}" app default
+    - name: Apply Gateway
+      run: bash scripts/setup_gateway.sh

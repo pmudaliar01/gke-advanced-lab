@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels: { app: api }
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector: { matchLabels: { app: api } }
+  template:
+    metadata:
+      labels: { app: api }
+    spec:
+      serviceAccountName: api-sa
+      containers:
+      - name: api
+        image: "{{ .Values.imageRepo }}/api:{{ .Values.imageTag }}"
+        ports: [{ containerPort: {{ .Values.service.apiPort }} }]
+        readinessProbe: { httpGet: { path: /healthz, port: {{ .Values.service.apiPort }} }, periodSeconds: 5 }
+        livenessProbe:  { httpGet: { path: /livez,   port: {{ .Values.service.apiPort }} }, periodSeconds: 10 }
+        resources:
+          requests: { cpu: "200m", memory: "256Mi" }
+          limits:   { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-svc
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  selector: { app: api }
+  ports:
+    - port: 80
+      targetPort: {{ .Values.service.apiPort }}
+  type: ClusterIP
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: api-pdb }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: api } }

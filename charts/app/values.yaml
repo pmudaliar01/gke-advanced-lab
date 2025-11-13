@@ -1,0 +1,11 @@
+imageRepo: "REGION-docker.pkg.dev/PROJECT/apps"
+imageTag: "dev"
+
+api:
+  replicas: 2
+web:
+  replicas: 2
+
+service:
+  apiPort: 8080
+  webPort: 8080

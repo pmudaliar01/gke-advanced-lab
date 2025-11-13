@@ -1,0 +1,9 @@
+loki:
+  auth_enabled: false
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: false
+tableManager:
+  retention_deletes_enabled: true
+  retention_period: 168h  # 7 days

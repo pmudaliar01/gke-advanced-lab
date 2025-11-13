@@ -1,0 +1,15 @@
+# Node
+node_modules/
+# Python
+__pycache__/
+*.pyc
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.crash
+.terraform.lock.hcl
+# Helm
+charts/**/charts/
+# Misc
+.DS_Store

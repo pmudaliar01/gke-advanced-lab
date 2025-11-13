@@ -12,7 +12,7 @@ on:
         default: "dev"
 
 permissions:
-  id-token: write   # needed for OIDC
+  id-token: write   # for OIDC
   contents: read
 
 jobs:
@@ -24,20 +24,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ---- Auth to Google Cloud via OIDC (keyless) ----
+      # --- OIDC auth to Google Cloud ---
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_WIF_SA_EMAIL }}
 
-      # ---- Cloud SDK + GKE auth plugin ----
+      # --- Cloud SDK + GKE auth plugin ---
       - name: Set up gcloud + GKE auth plugin
         uses: google-github-actions/setup-gcloud@v2
         with:
           install_components: gke-gcloud-auth-plugin
 
-      # ---- kubectl & helm ----
+      # --- kubectl & helm ---
       - name: Install kubectl
         uses: actions/setup-kubectl@v4
         with:
@@ -48,11 +48,11 @@ jobs:
         with:
           version: 'v3.14.4'
 
-      # ---- yq (no snap) ----
+      # --- yq (no snap) ---
       - name: Install yq
         uses: mikefarah/yq@v4.44.3
 
-      # ---- Get cluster credentials (uses the GKE auth plugin) ----
+      # --- Get cluster credentials (requires the GKE auth plugin) ---
       - name: Get GKE credentials
         env:
           USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
@@ -61,19 +61,26 @@ jobs:
             --zone "${{ vars.GCP_ZONE }}" \
             --project "${{ vars.GCP_PROJECT }}"
 
-      # ---- Set image repo & tag for env values ----
+      # (optional: sanity check the plugin works)
+      - name: kubectl sanity
+        run: |
+          kubectl version --client=true
+          kubectl get nodes || true
+
+      # --- Inject image repo/tag for the chosen env ---
       - name: Set image repo & tag
         run: |
           ENVIRONMENT="${{ github.event.inputs.env || 'dev' }}"
           yq -i '.imageRepo = "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/apps"' "env/${ENVIRONMENT}/values.yaml"
           yq -i '.imageTag = "${{ github.sha }}"' "env/${ENVIRONMENT}/values.yaml"
 
-      # ---- Deploy app with Helm wrapper ----
+      # --- Deploy with Helm wrapper ---
       - name: Helm deploy
         run: |
           ENVIRONMENT="${{ github.event.inputs.env || 'dev' }}"
           bash scripts/helm_deploy.sh "${ENVIRONMENT}" app default
 
-      # ---- Apply Gateway API resources (requires TLS secret or adjust to HTTP for smoke test) ----
+      # --- Apply Gateway (needs TLS secret or switch to HTTP for smoke) ---
       - name: Apply Gateway
         run: bash scripts/setup_gateway.sh
+
